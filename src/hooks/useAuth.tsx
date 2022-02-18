@@ -23,7 +23,18 @@ interface AuthProviderData {
   children: ReactNode;
 }
 
+interface AuthorizationResponse {
+  type: string 
+  params: {
+    access_token: string
+    state: string
+    error: string
+  }
+}
+
 const AuthContext = createContext({} as AuthContextData);
+
+const { CLIENT_ID } = process.env
 
 const twitchEndpoints = {
   authorization: 'https://id.twitch.tv/oauth2/authorize',
@@ -40,36 +51,42 @@ function AuthProvider({ children }: AuthProviderData) {
 
   async function signIn() {
     try {
-      // set isLoggingIn to true
 
-      // REDIRECT_URI - create OAuth redirect URI using makeRedirectUri() with "useProxy" option set to true
-      // RESPONSE_TYPE - set to "token"
-      // SCOPE - create a space-separated list of the following scopes: "openid", "user:read:email" and "user:read:follows"
-      // FORCE_VERIFY - set to true
-      // STATE - generate random 30-length string using generateRandom() with "size" set to 30
+      setIsLoggingIn(true)
 
-      // assemble authUrl with twitchEndpoint authorization, client_id, 
-      // redirect_uri, response_type, scope, force_verify and state
+      const REDIRECT_URI = makeRedirectUri({ useProxy: true })
+      const RESPONSE_TYPE = 'token'
+      const SCOPE = encodeURI('openid user:read:email user:read:follows')
+      const FORCE_VERIFY = true
+      const STATE = generateRandom(30)
 
-      // call startAsync with authUrl
+      const authUrl = `${twitchEndpoints.authorization}?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=${RESPONSE_TYPE}&scope=${SCOPE}&force_verify=${FORCE_VERIFY}&state=${STATE}`
+      
+      const { type, params } = await startAsync({ authUrl }) as AuthorizationResponse
 
-      // verify if startAsync response.type equals "success" and response.params.error differs from "access_denied"
-      // if true, do the following:
+      if (type !== 'success' || params.error === 'access_denied') new Error('Problema ao se autenticar')
 
-        // verify if startAsync response.params.state differs from STATE
-        // if true, do the following:
-          // throw an error with message "Invalid state value"
+      if (params.state !== STATE) new Error('Invalid state value')
 
-        // add access_token to request's authorization header
+      api.defaults.headers.authorization = `Bearer ${params.access_token}`
 
-        // call Twitch API's users route
+      const userResponse = await api.get('/users')
 
-        // set user state with response from Twitch API's route "/users"
-        // set userToken state with response's access_token from startAsync
+      const userReponseFilttred = userResponse.data.data[0]
+
+      setUser({
+        display_name: userReponseFilttred.display_name,
+        email: userReponseFilttred.email,
+        id: userReponseFilttred.id,
+        profile_image_url: userReponseFilttred.profile_image_url
+      })
+
+      setUserToken(params.access_token)
+
     } catch (error) {
-      // throw an error
+      new Error()
     } finally {
-      // set isLoggingIn to false
+      setIsLoggingIn(false)
     }
   }
 
@@ -77,13 +94,24 @@ function AuthProvider({ children }: AuthProviderData) {
     try {
       // set isLoggingOut to true
 
+      setIsLoggingOut(true)
+
       // call revokeAsync with access_token, client_id and twitchEndpoint revocation
+      await revokeAsync({token: userToken, clientId: CLIENT_ID}, {revocationEndpoint: twitchEndpoints.revocation})
     } catch (error) {
     } finally {
       // set user state to an empty User object
+
+      setUser({} as User)
       // set userToken state to an empty string
 
+      setUserToken('')
+
       // remove "access_token" from request's authorization header
+
+      delete api.defaults.headers.authorization
+
+      setIsLoggingOut(false)
 
       // set isLoggingOut to false
     }
@@ -91,6 +119,8 @@ function AuthProvider({ children }: AuthProviderData) {
 
   useEffect(() => {
     // add client_id to request's "Client-Id" header
+
+    api.defaults.headers['Client-Id'] = CLIENT_ID
   }, [])
 
   return (
